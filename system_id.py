@@ -1,5 +1,6 @@
 import time
 import sys
+import csv
 
 import cflib.crtp
 from cflib.crazyflie import Crazyflie
@@ -7,13 +8,10 @@ from cflib.crazyflie.log import LogConfig
 from cflib.crazyflie.syncCrazyflie import SyncCrazyflie
 from cflib.crazyflie.syncLogger import SyncLogger
 
-METHOD = 1
 MOVE_TIME = 1
 CMD_DELAY = 0.1
 LOG_DELAY = 0.01
 HOVER_HEIGHT = 0.5
-HOVER_THRUST = 26000
-MAX_HOVER_THRUST = 30000
 
 def wait_for_position_estimator(scf):
   print('Waiting for estimator to find position...')
@@ -55,26 +53,15 @@ def wait_for_position_estimator(scf):
           max_z - min_z) < threshold:
         break
 
-if METHOD == 1:
-  def set_roll(cf, value):
-    value = float(value)
-    cf.commander.send_setpoint(value, 0, 0, HOVER_THRUST)
-    print("Sent: %d, %d, %d (y), %d (t)", value, 0, 0, HOVER_THRUST)
+def set_roll(cf, value):
+  value = float(value)
+  cf.commander.send_zdistance_setpoint(value, 0, 0, HOVER_HEIGHT)
+  print("Sent: %d, %d, %d (yr), %d (h)", value, 0, 0, HOVER_HEIGHT)
 
-  def set_pitch(cf, value):
-    value = float(value)
-    cf.commander.send_setpoint(0, value, 0, HOVER_THRUST)
-    print("Sent: %d, %d, %d (y), %d (t)", 0, value, 0, HOVER_THRUST)
-else:
-  def set_roll(cf, value):
-    value = float(value)
-    cf.commander.send_zdistance_setpoint(value, 0, 0, HOVER_HEIGHT)
-    print("Sent: %d, %d, %d (yr), %d (h)", value, 0, 0, HOVER_HEIGHT)
-
-  def set_pitch(cf, value):
-    value = float(value)
-    cf.commander.send_zdistance_setpoint(0, value, 0, HOVER_HEIGHT)
-    print("Sent: %d, %d, %d (yr), %d (h)", 0, value, 0, HOVER_HEIGHT)
+def set_pitch(cf, value):
+  value = float(value)
+  cf.commander.send_zdistance_setpoint(0, value, 0, HOVER_HEIGHT)
+  print("Sent: %d, %d, %d (yr), %d (h)", 0, value, 0, HOVER_HEIGHT)
 
 def set_yawrate(cf, value):
   value = float(value)
@@ -115,29 +102,15 @@ if __name__ == '__main__':
 
     cf = Crazyflie(rw_cache='./cache')
 
-    with SyncCrazyflie(available[0][0], cf=cf) as scf:
-      wait_for_position_estimator(scf)
-      cf = scf.cf
+    with open(time.strftime('%Y-%m-%d-%H-%M-%S.csv'), 'w', newline='') as file:
+      csv_writer = csv.writer(file)
+      
+      with SyncCrazyflie(available[0][0], cf=cf) as scf:
+        wait_for_position_estimator(scf)
+        cf = scf.cf
 
-      print('Moving to hover...')
+        print('Moving to hover...')
 
-      if METHOD == 1:
-        steps = int(1 / CMD_DELAY)
-        thrust = 0
-
-        for i in range(steps):
-          thrust = min(thrust + (MAX_HOVER_THRUST / steps), MAX_HOVER_THRUST)
-          cf.commander.send_setpoint(0, 0, 0, thrust)
-          time.sleep(CMD_DELAY)
-
-        print('Reached launch thrust')
-        time.sleep(0.5)
-        print('Launch complete, delaying to stabilise hover...')
-
-        for i in range(5):
-          cf.commander.send_setpoint(0, 0, 0, HOVER_THRUST)
-          time.sleep(CMD_DELAY)
-      else:
         steps = int(1 / CMD_DELAY)
         height = 0
 
@@ -151,21 +124,20 @@ if __name__ == '__main__':
         for i in range(5):
           cf.commander.send_zdistance_setpoint(0, 0, 0, HOVER_HEIGHT)
 
-      with SyncLogger(scf, log_conf) as logger:
-        counter = 0
-        print('Beginning test')
+        with SyncLogger(scf, log_conf) as logger:
+          counter = 0
+          print('Beginning test')
 
-        for log_entry in logger:
-          timestamp = log_entry[0]
-          data = log_entry[1]
-          logconf_name = log_entry[2]
+          for log_entry in logger:
+            timestamp = log_entry[0]
+            data = log_entry[1]
+            logconf_name = log_entry[2]
 
-          print('Received [%d][%s]: %s' % (timestamp, logconf_name, data))
+            csv_writer.writerow([timestamp] + data)
+            print('Received [%d][%s]: %s' % (timestamp, logconf_name, data))
 
-          counter -= 1
+            counter -= 1
 
-          if counter <= 0:
-            test(cf, value)
-            counter = int(CMD_DELAY / LOG_DELAY) 
-
-
+            if counter <= 0:
+              test(cf, value)
+              counter = int(CMD_DELAY / LOG_DELAY) 
