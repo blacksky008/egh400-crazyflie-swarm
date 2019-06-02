@@ -1,3 +1,5 @@
+# yawrate units = degrees/second
+
 import time
 import sys
 import csv
@@ -9,7 +11,7 @@ from cflib.crazyflie.syncCrazyflie import SyncCrazyflie
 from cflib.crazyflie.syncLogger import SyncLogger
 
 MOVE_TIME = 1
-CMD_DELAY = 0.1
+CMD_DELAY = 0.01
 LOG_DELAY = 0.01
 HOVER_HEIGHT = 0.5
 
@@ -56,17 +58,17 @@ def wait_for_position_estimator(scf):
 def set_roll(cf, value):
   value = float(value)
   cf.commander.send_zdistance_setpoint(value, 0, 0, HOVER_HEIGHT)
-  print("Sent: %d, %d, %d (yr), %d (h)", value, 0, 0, HOVER_HEIGHT)
+  print("Sent: {} (r), {} (p), {} (yr), {} (h)".format(value, 0, 0, HOVER_HEIGHT))
 
 def set_pitch(cf, value):
   value = float(value)
   cf.commander.send_zdistance_setpoint(0, value, 0, HOVER_HEIGHT)
-  print("Sent: %d, %d, %d (yr), %d (h)", 0, value, 0, HOVER_HEIGHT)
+  print("Sent: {} (r), {} (p), {} (yr), {} (h)".format(0, value, 0, HOVER_HEIGHT))
 
 def set_yawrate(cf, value):
   value = float(value)
   cf.commander.send_zdistance_setpoint(0, 0, value, HOVER_HEIGHT)
-  print("Sent: %d, %d, %d (yr), %d (h)", 0, 0, value, HOVER_HEIGHT)
+  print("Sent: {} (r), {} (p), {} (yr), {} (h)".format(0, 0, value, HOVER_HEIGHT))
 
 
 if __name__ == '__main__':
@@ -75,14 +77,17 @@ if __name__ == '__main__':
     sys.exit(1)
 
   test = sys.argv[1]
-  value = sys.argv[2] if len(sys.argv) > 2 else 0.1
+  value = float(sys.argv[2]) if len(sys.argv) > 2 else 0.05
 
   if test == "pitch":
     test = set_pitch
+    values_sent = [0, value, 0, HOVER_HEIGHT]
   elif test == "roll":
     test = set_roll
+    values_sent = [value, 0, 0, HOVER_HEIGHT]
   elif test == "yawrate":
     test = set_yawrate
+    values_sent = [0, 0, value, HOVER_HEIGHT]
 
   cflib.crtp.init_drivers(enable_debug_driver=False)
   print('Scanning interfaces for Crazyflies...')
@@ -99,12 +104,18 @@ if __name__ == '__main__':
     log_conf.add_variable('stabilizer.pitch', 'float')
     log_conf.add_variable('stabilizer.yaw', 'float')
     log_conf.add_variable('gyro.z', 'float')
-
+    log_conf.add_variable('stabilizer.thrust', 'uint16_t')
     cf = Crazyflie(rw_cache='./cache')
 
     with open(time.strftime('%Y-%m-%d-%H-%M-%S.csv'), 'w', newline='') as file:
       csv_writer = csv.writer(file)
-      
+      csv_writer.writerow([
+        'Roll: {}'.format(values_sent[0]),
+        'Pitch: {}'.format(values_sent[1]),
+        'Yawrate: {}'.format(values_sent[2]),
+        'Hover height: {}'.format(values_sent[3])
+      ])
+
       with SyncCrazyflie(available[0][0], cf=cf) as scf:
         wait_for_position_estimator(scf)
         cf = scf.cf
@@ -121,8 +132,11 @@ if __name__ == '__main__':
 
         print('Delaying to stabilise hover...')
 
-        for i in range(5):
+        for i in range(int(.5 / CMD_DELAY)):
           cf.commander.send_zdistance_setpoint(0, 0, 0, HOVER_HEIGHT)
+          time.sleep(CMD_DELAY)
+
+        start_time = time.time()
 
         with SyncLogger(scf, log_conf) as logger:
           counter = 0
@@ -133,11 +147,31 @@ if __name__ == '__main__':
             data = log_entry[1]
             logconf_name = log_entry[2]
 
-            csv_writer.writerow([timestamp] + data)
-            print('Received [%d][%s]: %s' % (timestamp, logconf_name, data))
+            csv_writer.writerow([timestamp] + list(data.values()))
+            print('Received [%d]: %s' % (timestamp, data))
 
             counter -= 1
 
             if counter <= 0:
               test(cf, value)
-              counter = int(CMD_DELAY / LOG_DELAY) 
+              #cf.commander.send_zdistance_setpoint(0, 0, 0, HOVER_HEIGHT)
+              counter = int(CMD_DELAY / LOG_DELAY)
+
+            if (time.time() - start_time) >= MOVE_TIME:
+                break
+
+        print('Lowering drone...')
+
+        for i in range(int(1 / CMD_DELAY)):
+          cf.commander.send_zdistance_setpoint(0, 0, 0, HOVER_HEIGHT)
+          time.sleep(CMD_DELAY)
+
+        steps = int(steps / 1.5)
+
+        for i in range(steps):
+          height = max(height - (HOVER_HEIGHT / steps), 0.05)
+          cf.commander.send_zdistance_setpoint(0, 0, 0, height)
+          time.sleep(CMD_DELAY)
+
+        print('Stopping')
+        cf.commander.send_stop_setpoint()
