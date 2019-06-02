@@ -1,4 +1,5 @@
 import time
+import sys
 
 import cflib.crtp
 from cflib.crazyflie import Crazyflie
@@ -82,8 +83,19 @@ def set_yawrate(cf, value):
 
 
 if __name__ == '__main__':
-  test = set_pitch
-  value = 0.1
+  if len(sys.argv) < 2:
+    print('Test required')
+    sys.exit(1)
+
+  test = sys.argv[1]
+  value = sys.argv[2] if len(sys.argv) > 2 else 0.1
+
+  if test == "pitch":
+    test = set_pitch
+  elif test == "roll":
+    test = set_roll
+  elif test == "yawrate":
+    test = set_yawrate
 
   cflib.crtp.init_drivers(enable_debug_driver=False)
   print('Scanning interfaces for Crazyflies...')
@@ -108,7 +120,7 @@ if __name__ == '__main__':
       cf = scf.cf
 
       print('Moving to hover...')
-      
+
       if METHOD == 1:
         steps = int(1 / CMD_DELAY)
         thrust = 0
