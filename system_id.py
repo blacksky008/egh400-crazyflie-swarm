@@ -10,10 +10,13 @@ from cflib.crazyflie.log import LogConfig
 from cflib.crazyflie.syncCrazyflie import SyncCrazyflie
 from cflib.crazyflie.syncLogger import SyncLogger
 
-MOVE_TIME = 1
+MOVE_TIME = 2
 CMD_DELAY = 0.01
 LOG_DELAY = 0.01
-HOVER_HEIGHT = 0.5
+HOVER_HEIGHT = 0.8
+
+HOME_X = 1.5
+HOME_Y = 0
 
 def wait_for_position_estimator(scf):
   print('Waiting for estimator to find position...')
@@ -119,21 +122,23 @@ if __name__ == '__main__':
       with SyncCrazyflie(available[0][0], cf=cf) as scf:
         wait_for_position_estimator(scf)
         cf = scf.cf
-
+        cf.param.set_value('flightmode.posSet', '1')
         print('Moving to hover...')
 
         steps = int(1 / CMD_DELAY)
         height = 0
 
-        for i in range(steps):
+        for i in range(3* steps):
           height = min(height + (HOVER_HEIGHT / steps), HOVER_HEIGHT)
-          cf.commander.send_zdistance_setpoint(0, 0, 0, height)
+          #cf.commander.send_zdistance_setpoint(0, 0, 0, height)
+          cf.commander.send_position_setpoint(HOME_X, HOME_Y, height, 0)
           time.sleep(CMD_DELAY)
 
         print('Delaying to stabilise hover...')
 
         for i in range(int(.5 / CMD_DELAY)):
-          cf.commander.send_zdistance_setpoint(0, 0, 0, HOVER_HEIGHT)
+          cf.commander.send_position_setpoint(HOME_X, HOME_Y, HOVER_HEIGHT, 0)
+          #cf.commander.send_zdistance_setpoint(0, 0, 0, HOVER_HEIGHT)
           time.sleep(CMD_DELAY)
 
         start_time = time.time()
@@ -153,24 +158,30 @@ if __name__ == '__main__':
             counter -= 1
 
             if counter <= 0:
-              test(cf, value)
+              #test(cf, value)
+              cf.commander.send_position_setpoint(HOME_X, HOME_Y, HOVER_HEIGHT, 0)
               #cf.commander.send_zdistance_setpoint(0, 0, 0, HOVER_HEIGHT)
               counter = int(CMD_DELAY / LOG_DELAY)
 
             if (time.time() - start_time) >= MOVE_TIME:
                 break
 
+        print('Reversing...')
+
+        #for i in range(steps):
+        #    test(cf, -value)
+        #    time.sleep(CMD_DELAY)
+
         print('Lowering drone...')
 
-        for i in range(int(1 / CMD_DELAY)):
-          cf.commander.send_zdistance_setpoint(0, 0, 0, HOVER_HEIGHT)
+        for i in range(4 * steps):
+          cf.commander.send_position_setpoint(HOME_X, HOME_Y, HOVER_HEIGHT, 0)
+          #cf.commander.send_zdistance_setpoint(0, 0, 0, HOVER_HEIGHT)
           time.sleep(CMD_DELAY)
 
-        steps = int(steps / 1.5)
-
-        for i in range(steps):
-          height = max(height - (HOVER_HEIGHT / steps), 0.05)
-          cf.commander.send_zdistance_setpoint(0, 0, 0, height)
+        for i in range(1 * steps):
+          cf.commander.send_position_setpoint(HOME_X, HOME_Y, 0.2, 0)
+          #cf.commander.send_zdistance_setpoint(0, 0, 0, height)
           time.sleep(CMD_DELAY)
 
         print('Stopping')
