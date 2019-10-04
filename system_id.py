@@ -46,7 +46,6 @@ else:
     'stabilizer.roll',
     'stabilizer.pitch',
     'stabilizer.yaw',
-    'gyro.z',
     'stabilizer.thrust',
   ]
 
@@ -105,27 +104,26 @@ def find_initial_position(scf):
       return data['stateEstimate.x'], data['stateEstimate.y'], data['stateEstimate.z'], data['stabilizer.yaw']
 
 
-
 # roll test
-def set_roll(cf, value, hover_height):
+def set_roll(cf, value, thrust):
   value = float(value)
-  cf.commander.send_zdistance_setpoint(value, 0, 0, hover_height)
-  print("Sent: {} (r), {} (p), {} (yr), {} (h)".format(value, 0, 0, hover_height))
-  return [value, 0, 0, hover_height]
+  cf.commander.send_setpoint(value, 0, 0, thrust)
+  print("Sent: {} (r), {} (p), {} (yr), {} (t)".format(value, 0, 0, thrust))
+  return [value, 0, 0, thrust]
 
 # pitch test
-def set_pitch(cf, value, hover_height):
+def set_pitch(cf, value, thrust):
   value = float(value)
-  cf.commander.send_zdistance_setpoint(0, value, 0, hover_height)
-  print("Sent: {} (r), {} (p), {} (yr), {} (h)".format(0, value, 0, hover_height))
-  return [0, value, 0, hover_height]
+  cf.commander.send_setpoint(0, value, 0, thrust)
+  print("Sent: {} (r), {} (p), {} (yr), {} (t)".format(0, value, 0, thrust))
+  return [0, value, 0, thrust]
 
 # yawrate test
-def set_yawrate(cf, value, hover_height):
+def set_yawrate(cf, value, thrust):
   value = float(value)
-  cf.commander.send_zdistance_setpoint(0, 0, value, hover_height)
-  print("Sent: {} (r), {} (p), {} (yr), {} (h)".format(0, 0, value, hover_height))
-  return [0, 0, value, hover_height]
+  cf.commander.send_setpoint(0, 0, value, thrust)
+  print("Sent: {} (r), {} (p), {} (yr), {} (t)".format(0, 0, value, thrust))
+  return [0, 0, value, thrust]
 
 
 # shares cf, filename, test_complete, csv_file with main below
@@ -195,7 +193,6 @@ if __name__ == '__main__':
       log_conf.add_variable('stabilizer.roll', 'float')
       log_conf.add_variable('stabilizer.pitch', 'float')
       log_conf.add_variable('stabilizer.yaw', 'float')
-      log_conf.add_variable('gyro.z', 'float')
       log_conf.add_variable('stabilizer.thrust', 'uint16_t')
 
     init_cf = Crazyflie(rw_cache='./cache')
@@ -209,7 +206,7 @@ if __name__ == '__main__':
       cf = scf.cf
 
       wait_for_position_estimator(scf)
-      home_x, home_y, home_z, home_yaw = find_initial_position(scf)
+      home_x, home_y, home_z = find_initial_position(scf)
 
       print('Home found: ({}, {}, {})'.format(home_x, home_y, home_z))
       hover_height = max(min(home_z + HOME_HOVER_ADDITION, MIN_HOME_HOVER), MAX_HOME_HOVER)
@@ -222,13 +219,14 @@ if __name__ == '__main__':
       print('Moving to hover...')
 
       for i in range(int((INITIAL_HOVER_TIME - PRELOG_TIME) * SECOND_STEPS)):
-        cf.commander.send_position_setpoint(home_x, home_y, hover_height, home_yaw)
+        cf.commander.send_position_setpoint(home_x, home_y, hover_height, 0)
         time.sleep(CMD_DELAY)
 
       start_time = time.time()
       test_msg = False
       rev_msg = False
       delay_ratio = int(CMD_DELAY / LOG_DELAY)
+      hover_thrust = None
 
       with SyncLogger(scf, log_conf) as logger:
         counter = 0
@@ -245,21 +243,24 @@ if __name__ == '__main__':
 
           if counter <= 0:
             if time_diff < PRELOG_TIME:
-              cf.commander.send_position_setpoint(home_x, home_y, hover_height, home_yaw)
+              cf.commander.send_position_setpoint(home_x, home_y, hover_height, 0)
             elif time_diff < PRELOG_TIME + test_time:
               if not test_msg:
                 test_msg = True
                 print('Beginning test')
 
-              values_sent = test(cf, value, hover_height)
+              if hover_thrust is None:
+                hover_thrust = log_entry[1]['stabilizer.thrust']
+
+              values_sent = test(cf, value, hover_thrust)
             elif time_diff < PRELOG_TIME + test_time + REVERSE_TIME:
               if not rev_msg:
                 rev_msg = True
                 print('Reversing...')
 
-              values_sent = test(cf, -value, hover_height)
+              values_sent = test(cf, -value, hover_thrust)
             elif time_diff < PRELOG_TIME + test_time + REVERSE_TIME + POSTLOG_TIME:
-              cf.commander.send_position_setpoint(home_x, home_y, hover_height, home_yaw)
+              cf.commander.send_position_setpoint(home_x, home_y, hover_height, 0)
             else:
               print('Stopping logging')
               break
@@ -270,11 +271,11 @@ if __name__ == '__main__':
       print('Lowering drone...')
 
       for i in range(int((FINAL_HIGH_HOVER_TIME - POSTLOG_TIME) * SECOND_STEPS)):
-        cf.commander.send_position_setpoint(home_x, home_y, hover_height, home_yaw)
+        cf.commander.send_position_setpoint(home_x, home_y, hover_height, 0)
         time.sleep(CMD_DELAY)
 
       for i in range(FINAL_LOW_HOVER_TIME * SECOND_STEPS):
-        cf.commander.send_position_setpoint(home_x, home_y, low_hover_height, home_yaw)
+        cf.commander.send_position_setpoint(home_x, home_y, low_hover_height, 0)
         time.sleep(CMD_DELAY)
 
       print('Stopping')
