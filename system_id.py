@@ -24,6 +24,7 @@ MIN_HOME_HOVER = 0.5
 MAX_HOME_HOVER = 1.1
 MAX_LOW_HOVER_HEIGHT = 0.3
 LOW_HOVER_ADDITION = 0.1
+HOVER_THRUST_SENSITIVITY = 1000
 
 # test timing 
 INITIAL_HOVER_TIME = 5
@@ -47,6 +48,7 @@ else:
     'stabilizer.pitch',
     'stabilizer.yaw',
     'stabilizer.thrust',
+    'stateEstimate.z'
   ]
 
 SECOND_STEPS = int(1 / CMD_DELAY)
@@ -194,6 +196,7 @@ if __name__ == '__main__':
       log_conf.add_variable('stabilizer.pitch', 'float')
       log_conf.add_variable('stabilizer.yaw', 'float')
       log_conf.add_variable('stabilizer.thrust', 'uint16_t')
+      log_conf.add_variable('stateEstimate.x', 'float')
 
     init_cf = Crazyflie(rw_cache='./cache')
 
@@ -251,6 +254,8 @@ if __name__ == '__main__':
 
               if hover_thrust is None:
                 hover_thrust = log_entry[1]['stabilizer.thrust']
+              else:
+                hover_thrust += max(min((data[4] - hover_height) * HOVER_THRUST_SENSITIVITY, 65535), 0)
 
               values_sent = test(cf, value, hover_thrust)
             elif time_diff < PRELOG_TIME + test_time + REVERSE_TIME:
@@ -258,6 +263,7 @@ if __name__ == '__main__':
                 rev_msg = True
                 print('Reversing...')
 
+              hover_thrust += max(min((data[4] - hover_height) * HOVER_THRUST_SENSITIVITY, 65535), 0)
               values_sent = test(cf, -value, hover_thrust)
             elif time_diff < PRELOG_TIME + test_time + REVERSE_TIME + POSTLOG_TIME:
               cf.commander.send_position_setpoint(home_x, home_y, hover_height, 0)
