@@ -1,3 +1,4 @@
+
 # roll, pitch, yaw units = degrees
 # yawrate units = degrees/second
 # thrust units = uint16 scale 0-100%
@@ -21,10 +22,14 @@ LOG_POSITION = False
 # home hover parameters 
 HOME_HOVER_ADDITION = 0.4 # added to initial detected z
 MIN_HOME_HOVER = 0.5
-MAX_HOME_HOVER = 1.1
-MAX_LOW_HOVER_HEIGHT = 0.3
+MAX_HOME_HOVER = 0.6
+MAX_LOW_HOVER_HEIGHT = 0.2
 LOW_HOVER_ADDITION = 0.1
-HOVER_THRUST_SENSITIVITY = 1000
+
+HOVER_COEFF_1 = 1
+HOVER_COEFF_2 = 1.7
+HOVER_COEFF_3 = 7500
+HOVER_COEFF_4 = 500
 
 # test timing 
 INITIAL_HOVER_TIME = 5
@@ -48,7 +53,8 @@ else:
     'stabilizer.pitch',
     'stabilizer.yaw',
     'stabilizer.thrust',
-    'stateEstimate.z'
+    'stateEstimate.z',
+    'stateEstimate.vz'
   ]
 
 SECOND_STEPS = int(1 / CMD_DELAY)
@@ -103,7 +109,7 @@ def find_initial_position(scf):
   with SyncLogger(scf, log_config) as logger:
     for log_entry in logger:
       data = log_entry[1]
-      return data['stateEstimate.x'], data['stateEstimate.y'], data['stateEstimate.z'], data['stabilizer.yaw']
+      return data['stateEstimate.x'], data['stateEstimate.y'], data['stateEstimate.z']
 
 
 # roll test
@@ -121,12 +127,14 @@ def set_pitch(cf, value, thrust):
   return [0, value, 0, thrust]
 
 # yawrate test
-def set_yawrate(cf, value, thrust):
+def set_yaw(cf, value, thrust):
   value = float(value)
   cf.commander.send_setpoint(0, 0, value, thrust)
   print("Sent: {} (r), {} (p), {} (yr), {} (t)".format(0, 0, value, thrust))
   return [0, 0, value, thrust]
 
+def calc_thrust(target, z, vz):
+  return int(min(max((target - HOVER_COEFF_1*z - HOVER_COEFF_2*vz) * HOVER_COEFF_3 + HOVER_COEFF_4, 100), 65535))
 
 # shares cf, filename, test_complete, csv_file with main below
 
@@ -143,9 +151,9 @@ def end_test(sig, frame):
   if csv_file:
     csv_file.close()
 
-    if not test_complete:
-      print('Removing log file as test incomplete')
-      os.remove(filename)
+    #if not test_complete:
+      #print('Removing log file as test incomplete')
+      #os.remove(filename)
 
   print('Exiting')
   sys.exit(0)
@@ -169,10 +177,10 @@ if __name__ == '__main__':
     test = set_pitch
   elif test_name == "roll":
     test = set_roll
-  elif test_name == "yawrate":
+  elif test_name == "yaw":
     REVERSE_TIME = 0 # disable reversing for yawrate
     POSTLOG_TIME = 0 # disable postlog for yawrate
-    test = set_yawrate
+    test = set_yaw
 
   cflib.crtp.init_drivers(enable_debug_driver=False)
   print('Scanning interfaces for Crazyflies...')
@@ -196,7 +204,8 @@ if __name__ == '__main__':
       log_conf.add_variable('stabilizer.pitch', 'float')
       log_conf.add_variable('stabilizer.yaw', 'float')
       log_conf.add_variable('stabilizer.thrust', 'uint16_t')
-      log_conf.add_variable('stateEstimate.x', 'float')
+      log_conf.add_variable('stateEstimate.z', 'float')
+      log_conf.add_variable('stateEstimate.vz', 'float')
 
     init_cf = Crazyflie(rw_cache='./cache')
 
@@ -252,10 +261,7 @@ if __name__ == '__main__':
                 test_msg = True
                 print('Beginning test')
 
-              if hover_thrust is None:
-                hover_thrust = log_entry[1]['stabilizer.thrust']
-              else:
-                hover_thrust += max(min((data[4] - hover_height) * HOVER_THRUST_SENSITIVITY, 65535), 0)
+              hover_thrust = calc_thrust(hover_height, data[4], data[5])
 
               values_sent = test(cf, value, hover_thrust)
             elif time_diff < PRELOG_TIME + test_time + REVERSE_TIME:
@@ -263,7 +269,7 @@ if __name__ == '__main__':
                 rev_msg = True
                 print('Reversing...')
 
-              hover_thrust += max(min((data[4] - hover_height) * HOVER_THRUST_SENSITIVITY, 65535), 0)
+              hover_thrust = calc_thrust(hover_height, data[4], data[5])
               values_sent = test(cf, -value, hover_thrust)
             elif time_diff < PRELOG_TIME + test_time + REVERSE_TIME + POSTLOG_TIME:
               cf.commander.send_position_setpoint(home_x, home_y, hover_height, 0)
