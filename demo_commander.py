@@ -1,3 +1,4 @@
+import signal
 import sys
 from threading import Thread, Lock, Condition
 
@@ -7,27 +8,13 @@ from cflib.crazyflie.syncCrazyflie import SyncCrazyflie
 from cflib.crazyflie.syncLogger import SyncLogger
 from cflib.positioning.position_hl_commander import PositionHlCommander
 
-DIST = 0.25
 VELOCITY = 0.3
 
 SPEC = [
-  ('radio://0/20/2M', DIST, DIST, 0.5),
-  ('radio://0/40/2M', DIST, -DIST, 0.7),
-  ('radio://0/60/2M', -DIST, -DIST, 0.9),
-  ('radio://0/80/2M', -DIST, DIST, 1.1)
-]
-
-ROOM_X = 3.3
-ROOM_Y = 4.4
-
-FLIGHT_POS = [
-  (ROOM_X / 2, ROOM_Y / 2),
-  (ROOM_X / 3, ROOM_Y / 2),
-  (ROOM_X / 3, ROOM_Y / 3),
-  (ROOM_X * 2 / 3, ROOM_Y * 2 / 3),
-  (ROOM_X * 2 / 3, ROOM_Y / 3),
-  (ROOM_X / 2, ROOM_Y / 3),
-  (ROOM_X / 2, ROOM_Y / 2)
+  ('radio://0/20/2M', 0.5),
+  ('radio://0/60/2M', 0.7),
+  ('radio://0/80/2M', 0.9),
+  ('radio://0/100/2M', 1.1)
 ]
 
 scfs = []
@@ -45,6 +32,56 @@ def cancel_flight():
       print(e)
 
   sys.exit(0)
+
+def run_swarm_sequence(pc, unique_height):
+  pc.left(0.5)
+  pc.move_distance(0.5, 0, 0.3)
+  pc.move_distance(-0.5, -0.5, -0.3)
+  pc.left(0.5, velocity=VELOCITY*1.5)
+  pc.right(0.5, velocity=VELOCITY*1.5)
+  pc.up(0.5, velocity=VELOCITY*2)
+  pc.down(0.5, velocity=VELOCITY*2)
+  pc.go_to(1, 1, velocity=VELOCITY*1.5)
+  pc.go_to(0, 0, unique_height)
+  pc.go_to(0.5, 0, unique_height*0.5, velocity=VELOCITY*1.5)
+  pc.go_to(0, 0)
+
+
+def run_drone(scf, params):
+  uri, height = params
+
+  print(uri + ': waiting for estimator to find position...')
+  find_initial_position(scf)
+
+  init_lock.acquire()
+  num_init += 1
+
+  # wait for all threads to initialise to their position
+  if num_init == len(SPEC):
+    init_lock.release()
+    with init_condition: init_condition.notify_all()
+  else:
+    init_lock.release()
+    with init_condition: init_condition.wait()
+
+  # enter/exit hlcommander triggers takeoff/land
+  with PositionHlCommander(scf, default_velocity=VELOCITY, default_height=height) as pc:
+    run_swarm_sequence(pc, unique_height)
+
+def run_flight():
+  cflib.crtp.init_drivers(enable_debug_driver=False)
+  threads = []
+
+  for spec in SPEC:
+    scf = SyncCrazyflie(spec[0], cf=Crazyflie(rw_cache='./cache'))
+    scfs.append(scf)
+
+    t = Thread(target=run_drone, args=(scf, spec), daemon=True)
+    threads.append(t)
+    t.start()
+
+  for t in threads:
+    t.join()
 
 def find_initial_position(scf):
   log_config = LogConfig(name='Variance', period_in_ms=500)
@@ -79,53 +116,8 @@ def find_initial_position(scf):
       min_z = min(var_z_history)
       max_z = max(var_z_history)
 
-      if (max_x - min_x) < threshold and
-         (max_y - min_y) < threshold and
-         (max_z - min_z) < threshold:
-        return data['stateEstimate.x'], data['stateEstimate.y'], data['stateEstimate.z']
-
-def run_drone(scf, params):
-  uri, dx, dy, height = params
-
-  print(uri + ': waiting for estimator to find position...')
-  init_x, init_y, init_z = find_initial_position(scf)
-
-  init_lock.acquire()
-  num_init += 1
-
-  # wait for all threads to initialise to their position
-  if num_init == len(SPEC):
-    init_lock.release()
-    with cv: cv.notify_all()
-  else:
-    init_lock.release()
-    with cv: cv.wait()
-
-  # enter/exit hlcommander triggers takeoff/land
-  with PositionHlCommander(
-    scf,
-    x=init_x, y=init_y, z=init_z,
-    default_velocity=VELOCITY,
-    default_height=height,
-    controller=PositionHlCommander.CONTROLLER_MELLINGER
-  ) as pc:
-    for pos in FLIGHT_POS:
-      pos.go_to(pos[0] + dx, pos[1] + dy)
-
-def run_flight():
-  cflib.crtp.init_drivers(enable_debug_driver=False)
-  threads = []
-
-  for spec in SPEC:
-    scf = SyncCrazyflie(spec[0], cf=Crazyflie(rw_cache='./cache'))
-    scfs.append(scf)
-
-    t = Thread(target=run_drone, args=(scf, spec), daemon=True)
-    threads.append(t)
-    t.start()
-
-  for t in threads:
-    t.join()
+      if (max_x - min_x) < threshold and (max_y - min_y) < threshold and (max_z - min_z) < threshold:
+        break
 
 if __name__ == '__main__':
   signal.signal(signal.SIGTERM, cancel_flight)
